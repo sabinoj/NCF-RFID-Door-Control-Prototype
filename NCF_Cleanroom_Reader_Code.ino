@@ -4,205 +4,6 @@
 #include <string.h>
 #include <LiquidCrystal.h>
 
-// Computer module code
-#define MAX_NAME_LEN 16
-#define MAX_PROFILES 4
-
-#define MESSAGE_LENGTH 39
-uint8_t messageBuffer[MESSAGE_LENGTH];  // Global buffer to store the message
-
-// Communication Commands
-uint8_t R; // Status (0-4; off, Ready, User&Profiles, Login, Logout)
-uint8_t U; // Number of user's profiles (0-n)
-bool Y; // Door Relay OFF/ON
-bool S; // SHD OFF/ON
-bool D; // R/G LEDs RED/GREEN
-bool B; // Buzzer OFF/ON
-String userName = "";
-String profile1 = "";
-String profile2 = "";
-String profile3 = "";
-String profile4 = "";
-String* profilePtr[] = { &profile1, &profile2, &profile3, &profile4 };
-
-uint32_t card_number = 0;
-
-// Define the Profile struct
-typedef struct {
-    String profileName;
-    uint8_t profileIndex; // To keep track of how many profiles are used
-    bool logged = 0;
-} Profile;
-
-// Define the User struct
-typedef struct {
-    String userName;
-    uint32_t userID;
-    Profile profiles[MAX_PROFILES];
-    size_t profCount = 0;
-    bool logged = 0;
-} User;
-
-// Array of users
-#define MAX_USERS 4
-User users[MAX_USERS];
-
-// User info
-User* foundUser = 0;
-uint32_t ID;
-uint8_t profIndex;
-
-// Create user, set name and ID, save to users array
-void CreateNewUser(const String name, uint32_t id) {
-    static int userIndex = 0;
-    if (userIndex >= MAX_USERS) return; // Prevent overflow
-
-    users[userIndex].userName = name.substring(0, MAX_NAME_LEN-1); // Ensure length limit
-    users[userIndex].userID = id;
-    users[userIndex].logged = false;
-    users[userIndex].profCount = 0;
-
-    // Clear all profiles
-    for (size_t i = 0; i < MAX_PROFILES; i++) {
-        users[userIndex].profiles[i].profileName = "";
-        users[userIndex].profiles[i].profileIndex = i;
-        users[userIndex].profiles[i].logged = false;
-    }
-
-    userIndex++;
-}
-
-// Add profile to user
-void AddProfileToUser(uint32_t userID, const char* profileName) {
-    for (size_t i = 0; i < MAX_USERS; i++) {
-        if (users[i].userID == userID) {
-            // Add profile to the next available slot
-            for (size_t j = 0; j < MAX_PROFILES; j++) {
-                if (users[i].profiles[j].profileName[0] == '\0') {
-                    users[i].profiles[j].profileName = profileName;
-                    users[i].profiles[j].profileIndex = j;  // Profile index
-                    users[i].profCount++;  // Increment profile count
-                    return;
-                }
-            }
-        }
-    }
-}
-
-// Parse userID and profileIndex
-void ParseUserData(uint32_t &ID, uint8_t &profIndex) {
-  // Extract 3 bytes from indices 3, 4, 5 in little-endian order
-  ID = ((uint32_t)messageBuffer[3] * 10000) + ((uint32_t)messageBuffer[4] * 100) + (uint32_t)messageBuffer[5];
-  // ID =  (uint32_t)messageBuffer[5];
-  // ID |= (uint32_t)messageBuffer[4] << 8;
-  // ID |= (uint32_t)messageBuffer[3] << 16;
-
-  // Extract index from index 6
-  profIndex = messageBuffer[6]; 
-}
-
-// Look for user using userID
-User* FindUserByID(uint32_t targetID) {
-  for (size_t i = 0; i < MAX_USERS; i++) {
-    if (users[i].userID == targetID) {
-      return (users + i);  // Return pointer to matching user
-    }
-  }
-  return 0;  // Not found
-}
-
-// Decode and directly send the command over Serial with names strings
-void WriteCommand(uint8_t &R) {
-  if (R == 0) { // off
-    Y = 0;  S = 1;  D = 0;  B = 0; // Set pins
-  }
-  else if (R == 1) { // Ready
-    Y = 0;  S = 0;  D = 0;  B = 0; // Set pins
-  }
-  else if (R == 2) { // User
-    // Look for user
-     foundUser = FindUserByID(card_number);
-    if (foundUser != 0) { // If user was found
-      if (!foundUser->logged) { // If user is not logged
-        if (foundUser->profCount > 1) { // If user has profiles
-          // Set number of users
-          U = foundUser->profCount;
-          userName = foundUser->userName;
-          // Set user profile names        
-          for (size_t i = 0; i < foundUser->profCount; i++) {
-            *profilePtr[i] = foundUser->profiles[i].profileName;
-          }
-        }
-        else { // login directly
-          R = 3;
-          WriteCommand(R); // Login
-          return; // Exit loop
-        }
-      } else { // User is already loggedin
-        R = 4;
-        WriteCommand(R); // Logout
-        return; // Exit loop
-      }
-    } else { // User not found
-      // Set 255 to indicate User not available
-      
-      U = 255; // 255 means user not found
-    }
-    Y = 0;  S = 1;  D = 0;  B = 0; // Set pins
-  }
-  else if (R == 3) { // Login
-    // Login user and its profile
-    if (!foundUser->logged) { // If user is not logged
-      foundUser->logged = true; // Login user
-      if (foundUser->profCount > 1) { // If there is multiple frofiles
-        // Serial.print("!");
-        // Serial.print(profIndex, DEC);
-        foundUser->profiles[profIndex - 1].logged = true; // Login profile
-        // Serial.print(profIndex - 1, DEC);
-        
-        // Set profile name for confirmation
-        userName = foundUser->profiles[profIndex - 1].profileName;
-      }
-      else { // No profiles or one profile exists
-        if (foundUser->profCount == 1) {
-          // Set profile name
-          userName = foundUser->profiles[0].profileName;
-        }
-        else {
-          // Set user name
-          userName = foundUser->userName;
-        }
-      }
-    } else { // User is already loggedin
-        R = 4;
-        WriteCommand(R); // Logout
-        return; // Exit loop
-      }
-    Y = 1;  S = 1;  D = 1;  B = 1; // Set pins
-  }
-  else if (R == 4) { // Logout
-    foundUser->logged = false;
-    if (foundUser->profCount > 0) { // If there is multiple frofiles
-      // Logoff all profiles
-      for (uint8_t i = 0; i < foundUser->profCount; i++) {
-        if (foundUser->profiles[i].logged) { // Find the logged profile
-          foundUser->profiles[i].logged = false; // Log off
-          
-          // Set profile name for confirmation
-          userName = foundUser->profiles[i].profileName;
-        }
-      }
-    }
-    else { // No profiles exists
-      
-      // Set user name
-      userName = foundUser->userName;
-    }
-    Y = 0;  S = 1;  D = 1;  B = 0; // Set pins
-  }
-  else return; // Invalid status (Do not write)
-}
-
 // Pin Assignment:
 const int LED = A0; // TODO
 const int buzzer = A1; // TODO
@@ -218,7 +19,20 @@ const int button2 = 9;  // select button TODO
 // display enable on pin 10 and reset on pin 11
 const int doorSensor = 12; // TODO
 const int motionserialin = 13; // TODO
-uint8_t c = 1;
+uint8_t choice = 1;
+
+// Communication Commands
+uint8_t R; // Status (0-4; off, Ready, User&Profiles, Login, Logout)
+uint8_t U; // Number of user's profiles (0-4;255 User not found)
+bool Y; // Door Relay OFF/ON
+bool S; // SHD OFF/ON
+bool D; // R/G LEDs RED/GREEN
+bool B; // Buzzer OFF/ON
+String message1 = "";
+String message2 = "";
+String message3 = "";
+String message4 = "";
+
 
 
 // initialize the library by associating any needed LCD interface pin
@@ -227,7 +41,7 @@ const int rs = 11, en = 10, d4 = 5, d5 = 4, d6 = 3, d7 = 2;
 // LiquidCrystal lcd(rs, en, d4, d5, d6, d7);
 LiquidCrystal lcd(11, 10, 5, 4, 3, 2);
 
-#define ___ARR_SIZE___ 100 //captures bit data in 100 bit chunks to capture at least 1 complete read
+#define ___ARR_SIZE___ 100 //captures bit data in 200 bit chunks to capture at least 1 complete read
 
 //Uncomment this line to enable a verbose output mode.
 //The state machine is disabled, and the decoder does not run.
@@ -246,7 +60,8 @@ volatile uint8_t data_index = 0;
 volatile char data_array[___ARR_SIZE___] = {0};
 
 volatile uint8_t STATE = 0;
-int statmac = 0; //sets current state of flow diagram
+
+volatile uint8_t COMMAND_FLAG = 0;
 
 //defines expected period of FSK modulation on iCards
 const unsigned long Low_Period_min = 960 / 8;  // 60us * 16,000,000Hz
@@ -254,6 +69,19 @@ const unsigned long Low_Period_max = 1288 / 8;  // 80.5us * 16,000,000Hz
 const unsigned long High_Period_min = 1296 / 8; // 81us * 16,000,000Hz
 const unsigned long High_Period_max = 1600 / 8; // 100us * 16,000,000Hz
 
+//variables for handling output to LCD
+const unsigned long message1_TIMEOUT = 5;  // ms timeout for message1 completion
+#define MAX_BUFFER_SIZE 150           // Max number of bytes we can buffer
+volatile uint8_t buffer[MAX_BUFFER_SIZE];
+size_t serialBufferIndex = 0;
+
+// boolean to check if a card was scanned
+// bool cardScanned = false;
+
+// array that holds byte data
+uint8_t bytes[39];
+
+uint32_t card_number = 0;
 
 /*
 struct HID_CARD_DATA{
@@ -293,8 +121,6 @@ char parity_check_binary(uint64_t data)
 
 char decode_HID_35_bit_125KHz_Card_Data (char* input, uint8_t in_size, char* output, uint8_t* out_size)
 {
-    /*NOTE: THIS METHOD GOES UNUSED IN THE CODE AND CAN BE IGNORED
-    PLEASE SEE THE METHOD "decode_HID_35_bit_125KHz_Card_Data_Binary" INSTEAD*/
   //TODO: Update this for performance purposes by making everything simplified to a single 64-bit bit-wise operation.
 
   bool parity_bit[3] = {0};
@@ -346,38 +172,38 @@ char decode_HID_35_bit_125KHz_Card_Data_Binary (char* input, uint8_t in_size, ui
   card_number   = (0x0000001FFFFE & (*output)) >>  1;
   //parity_bit[2] =  0x000000000001 & (*output);
 
-  Serial.print("Raw Data: ");
-  Serial.print((uint32_t)((*output) >> 32), BIN);
-  Serial.println((uint32_t)((*output) & 0x00000000FFFFFFFF), BIN);
+  // // Serial.print("Raw Data: ");
+  // // Serial.print((uint32_t)((*output) >> 32), BIN);
+  // // Serial.println((uint32_t)((*output) & 0x00000000FFFFFFFF), BIN);
 
-  Serial.print("Card Format: ");
-  Serial.println(card_format, BIN);
-  Serial.println(card_format, DEC);
+  // // Serial.print("Card Format: ");
+  // // Serial.println(card_format, BIN);
+  // // Serial.println(card_format, DEC);
 
-  Serial.print("Facility Code: ");
-  Serial.println(facility_code, BIN);
-  Serial.println(facility_code, DEC); 
+  // // Serial.print("Facility Code: ");
+  // // Serial.println(facility_code, BIN);
+  // // Serial.println(facility_code, DEC); 
 
-  Serial.print("Card Number: ");
-  Serial.println(card_number, BIN);
-  Serial.println(card_number, DEC);
+  // // Serial.print("Card Number: ");
+  // // Serial.println(card_number, BIN);
+  // // Serial.println(card_number, DEC);
 
-  //0011.1011.0110.1101.1011.0110.1101.1011.0110
+//0011.1011.0110.1101.1011.0110.1101.1011.0110
   //Check the even parity first:
   if(parity_check_binary(0x0003B6DB6DB6 & (*output)) == 1) //?????
   {
-    Serial.println("First even parity check failed!");
+    // Serial.println("First even parity check failed!");
     return -2; //even parity failed.
   }//End if
   //Check the odd parity second:
   if(parity_check_binary(0x00036DB6DB6D & (*output)) == 0)
   {
-    Serial.println("Second odd parity check failed!");
+    // Serial.println("Second odd parity check failed!");
     return -3;  //odd parity failed.
   }//End if
   if(parity_check_binary(0x0007FFFFFFFF & (*output)) == 0)
   {
-    Serial.println("Third odd parity check failed!");
+    // // Serial.println("Third odd parity check failed!");
     return -4;  //odd parity failed.
   }//End if
 
@@ -447,7 +273,6 @@ char manchester_decoding_binary(char* input, uint8_t in_size, uint64_t* output)
       else                                              //Unknown Data ERROR
         return -1;
       ++out_size;   
-
     }//End for loop
 
     return out_size;
@@ -512,13 +337,13 @@ void insert_character(char input) //fills buffer with valid bit data
   if (data_index > ___ARR_SIZE___ - 1)
   {
       digitalWrite(SHD, HIGH);
-      cli();
+      //cli();
       //Shut down the timer1 unit.
       TCCR1A = 0;          
       TCCR1B = 0;          
       TIMSK1 = 0;
       T1OVF_Counter = 0;
-      sei();
+      //sei();
       FirstMeas = 1;
       Low_Pulses = 0;
       High_Pulses = 0;  
@@ -560,7 +385,7 @@ ISR(TIMER1_CAPT_vect)
       {
         if (High_Pulses != 1)
         {        
-          //Serial.print("X");
+          //// Serial.print("X");
           //insert_character('X');
           state_machine('X');
           //digitalWrite(13, HIGH);
@@ -571,7 +396,7 @@ ISR(TIMER1_CAPT_vect)
       if (Low_Pulses == 6)
       {
         Low_Pulses = 0;
-        //Serial.print("0");
+        //// Serial.print("0");
         //digitalWrite(12, LOW);
         //insert_character('0');
         state_machine('0');
@@ -589,14 +414,14 @@ ISR(TIMER1_CAPT_vect)
           state_machine('X');
           //digitalWrite(13, HIGH); //pin 12 vs 13 for logic analyzer debugging  
         }
-        //Serial.print("X");
+        //// Serial.print("X");
           Low_Pulses = 0;
       }
 
       if (High_Pulses == 5)
       {
         High_Pulses = 0;
-        //Serial.print("1");
+        //// Serial.print("1");
         //digitalWrite(12, HIGH);
         //insert_character('1');
         state_machine('1');
@@ -608,10 +433,10 @@ ISR(TIMER1_CAPT_vect)
       //Error, invalid capture.
       Low_Pulses = 0;
       High_Pulses = 0;
-      //Serial.print("\n\rInvalid period! ");
-      //Serial.println(Period, DEC);
-      //Serial.print(" ticks.\n\r");
-      //Serial.print("-");
+      //// Serial.print("\n\rInvalid period! ");
+      //// Serial.println(Period, DEC);
+      //// Serial.print(" ticks.\n\r");
+      //// Serial.print("-");
       //insert_character('-');
       state_machine('-');
     }
@@ -625,20 +450,155 @@ bool buttonPushed(int button){
   return digitalRead(button) == HIGH;  // assuming button is active LOW
 }
 
+
+// Talk to the comuter module (Send bytes including card serial number and account number
+void WriteCereal(uint32_t cardnumenc, int j) {
+  Serial.end();
+  Serial.begin(9600);
+  uint8_t Arr[3];
+    for(int i = 0; i < 3; i++){  //for loop to capture 2 digit integers of card number
+      Arr[i] = cardnumenc%(100); //% sign for byte capture
+        cardnumenc /= 100;
+    }
+    Serial.write(1); //...
+    Serial.write(9); //...
+    Serial.write(12); //Preamble
+    Serial.write(Arr[2]); //...
+    Serial.write(Arr[1]); //...
+    Serial.write(Arr[0]); //Card number
+    Serial.write(j); //Account number
+    Serial.write(0); //...
+    Serial.write(0); //...
+    Serial.write(0); //buffer 0's
+    Serial.write(9 ^ 12 ^ Arr[2] ^ Arr[1] ^ Arr[0] ^ j); //checksum
+    // delay(50);
+    Serial.end();
+    Serial.begin(19200);
+    // card_number = 0;
+    S = 1;
+ }
+
+const unsigned long MESSAGE_TIMEOUT = 5;  // ms timeout for message completion
+bool secondMessage = false;
+
+int SerialReadCommand() {
+  uint8_t cmd_buffer[MAX_BUFFER_SIZE];
+  int index = 0;
+  unsigned long lastByteTime = 0;
+
+  if (Serial.available())
+  {
+    index = Serial.readBytes(cmd_buffer, MAX_BUFFER_SIZE);
+  }
+
+  // If timeout passed and buffer has data, process it
+  if (index > 0) // && millis() - lastByteTime > MESSAGE_TIMEOUT) 
+  {
+    // Serial.print("index = ");
+    // Serial.print(index);
+    message1 = "";
+    message2 = "";
+    int i = 0;
+    bool justWroteChar = false;
+    secondMessage = false;
+
+    while (i < index) {
+      if (cmd_buffer[i] == 254) {  // Start of instruction
+        i++;
+        if (i >= index) break;
+        uint8_t instruction = cmd_buffer[i++];
+
+        // Handle known instruction sequences
+        if (instruction == 71) {
+          i += 2;  // Skip 2 extra bytes
+          secondMessage = true;
+        } else if (instruction == 86 || instruction == 87) {
+          if (i >= index) break;
+          uint8_t value = cmd_buffer[i++];
+
+          if (instruction == 86) {
+            if (value == 1) S = true;
+            else if (value == 2) D = false;
+            else if (value == 4) Y = false;
+            else if (value == 5) B = false;
+          } else if (instruction == 87) {
+            if (value == 1) S = false;
+            else if (value == 2) D = true;
+            else if (value == 4) Y = true;
+            else if (value == 5) B = true;
+          }
+        } else if (instruction == 37 || instruction == 66) {
+          i += 1;  // Skip 1 extra byte
+        }
+
+        // Add space if a char was just written
+        if (justWroteChar) {
+          if (!secondMessage)
+            message1 += ' ';
+          else
+            message2 += ' ';
+          justWroteChar = false;
+        }
+
+      } else {  // Regular character
+        if (isPrintable(cmd_buffer[i])) {
+          if (!secondMessage)
+            message1 += (char)cmd_buffer[i];
+          else
+            message2 += (char)cmd_buffer[i];
+          justWroteChar = true;
+        }
+        i++;
+        if (message1[0] != "") {
+        message3 = message1;
+        message4 = message2;
+        }
+      }
+    }
+
+    // Serial.println();
+    // Debug: Output control variables
+    // Serial.print("Y="); // Serial.print(Y);
+    // Serial.print(" S="); // Serial.print(S);
+    // Serial.print(" D="); // Serial.print(D);
+    // Serial.print(" B="); // Serial.println(B);
+
+    // Output filtered messages
+    // Serial.println("Filtered ASCII Output:");
+    // Serial.println(message1);
+    if (secondMessage) {
+      // Serial.println(message2);
+    }
+
+    // Update LCD
+    lcd.clear();
+    lcd.setCursor(0, 0);
+    for (char c : message1) {
+      lcd.print(c);
+    }
+    if (secondMessage) {
+      lcd.setCursor(0, 1);
+      for (char c : message2) {
+        lcd.print(c);
+      }
+    }
+
+    index = 0;  // Reset buffer
+  }
+}
+
 void cardRead()
 {
   if (data_index > ___ARR_SIZE___ - 1)
   {
     //digitalWrite(13, HIGH);   //Give an indication to the user that the system is in transmission mode.
-
     uint64_t raw_data = 0;
     decode_HID_35_bit_125KHz_Card_Data_Binary (data_array, data_index, &raw_data);
-    //Serial.print("Binary Data: ");
-    //Serial.print((uint32_t)(raw_data >> 32), BIN);
-    //Serial.print("|");
-    //Serial.println((uint32_t)(raw_data & 0x00000000FFFFFFFF), BIN);
+    //// Serial.print("Binary Data: ");
+    //// Serial.print((uint32_t)(raw_data >> 32), BIN);
+    //// Serial.print("|");
+    //// Serial.println((uint32_t)(raw_data & 0x00000000FFFFFFFF), BIN);
 
-    // memset((void*)data_array, 0, ___ARR_SIZE___); // Reset data_array
     data_index = 0;
     //Re-enable the system.
     TCCR1A = 0;           // Initialize Timer1A
@@ -646,7 +606,7 @@ void cardRead()
     TCCR1B |= B00000010;  // Internal Clock, Prescaler = 8, ICU Filter DIS, ICU Pin RISING
     TIMSK1 |= B00100001;  // Enable Timer1 Overflow and Capture Interrupts
     //digitalWrite(13, LOW); //Give an indication to the user that the system has exited transmission mode.
-    digitalWrite(SHD, LOW);
+    digitalWrite(SHD, HIGH);
   }
 }//End cardRead
 
@@ -655,7 +615,7 @@ void UpdateOutputs () {
   digitalWrite(LED, D);
   digitalWrite(relay, Y);
   digitalWrite(SHD, S);
-  // digitalWrite(buzzer, B);
+  digitalWrite(buzzer, B);
   if (B == 1) {
     tone(buzzer, 1000);
   } else {
@@ -664,39 +624,39 @@ void UpdateOutputs () {
 }
 
 // LCD display (line1, line2)
-void display(const String line1, const String line2) {
-  lcd.display();
-  lcd.clear();                // Clear previous display
-  lcd.setCursor(0, 0);        // Line 1, column 0
-  lcd.print(line1);           // Print first line
-  lcd.setCursor(0, 1);        // Line 2, column 0
-  lcd.print(line2);           // Print second line
-}
+// void display(const String line1, const String line2) {
+//   lcd.display();
+//   // lcd.clear();                // Clear previous display
+//   lcd.setCursor(0, 0);        // Line 1, column 0
+//   lcd.print(line1);           // Print first line
+//   lcd.setCursor(0, 1);        // Line 2, column 0
+//   lcd.print(line2);           // Print second line
+//   delay(100);
+// }
 
 void setup()
 {
-  // John
-  CreateNewUser(">_> uh oh", 199440);
-  AddProfileToUser(199440, "Are you sure?");
-  AddProfileToUser(199440, "No you're not");
-
+  pinMode(A4, OUTPUT);
+  digitalWrite(A4, LOW);
   pinMode(button1, INPUT_PULLUP);  // Internal pull-up resistor
   pinMode(button2, INPUT_PULLUP);  // Internal pull-up resistor
   pinMode(doorSensor, INPUT);
   pinMode(LED, OUTPUT);  // Set analog pin A0 as digital output
   pinMode(buzzer, OUTPUT);
   pinMode(relay, OUTPUT);
-  Serial.begin(9600);
-
+  Serial.begin(19200);
+  Serial.setTimeout(500); //Set a timeout of 500 millisecond when reading data.
   // Initialize serial communication
-  Serial.println("FSK Decoder ONLINE:\n\r");
+  // // Serial.println("FSK Decoder ONLINE:\n\r");
 
-//  digitalWrite(relay, LOW);      // Start with relay OFF (door locked)
+  digitalWrite(relay, LOW);      // Start with relay OFF (door locked)
 
   // Pin Setup
   pinMode(fskSignalPin, INPUT);  // Set the FSK signal pin as input, pin assignment defined at top of code
   pinMode(SHD, OUTPUT);  // SHD control pin for EM4095 HIGH => SLEEP, LOW => ONLINE
-  digitalWrite(SHD, LOW);
+  digitalWrite(SHD,  HIGH);
+  //delay(100);
+  //digitalWrite(SHD, LOW);
 
 
   // Timer1 Setup for FSK signal detection
@@ -707,26 +667,11 @@ void setup()
   
   // set up the LCD's number of columns and rows:
   lcd.begin(16, 2); //16 columns, 2 rows
+  lcd.setCursor(0, 0);
+  lcd.print("Initializing...");
   
-  // User data
-  // Tony
-  CreateNewUser("Tony Weidel", 201266);
-  AddProfileToUser(201266, "Personal");
-  AddProfileToUser(201266, "Work");
-  AddProfileToUser(201266, "Other");
-  AddProfileToUser(201266, "The other Tony");
-  // Moody
-  CreateNewUser("Moody Ekladios", 197319);
-  // Juliana
-  CreateNewUser("Juliana Batista", 201399);
-  AddProfileToUser(201399, "Personal");
-  AddProfileToUser(201399, "Ivan");
-  AddProfileToUser(201399, "Bandit");
-  // Julian
-  CreateNewUser("Julain Porro", 104167);
-  AddProfileToUser(104167, "JOOLIAN");
-
-  R = 1;
+  S = 1;
+  
 }//End setup
 
 // millis variables
@@ -739,105 +684,62 @@ const unsigned long debounceDuration = 300;     // 300ms debounce
 const unsigned long stateWaitDuration = 10000;  // 10 seconds
 const unsigned long serialReadInterval = 2000;  // 1 second
 
-// uint32_t temp_card_number;
-//bool selected = false;
-
+bool door = false;
 
 void loop() {
-  Serial.print('R');
-  Serial.println(R, DEC);
-
   bool sensor = digitalRead(doorSensor);
 
   // Trigger only when state goes from LOW to HIGH
   if (sensor == 1) {
-    display("Door is open", "Close the door");
-    tone(buzzer, 1000);
-    delay(1000);
-  }
-  else { // Operate the system
-    WriteCommand(R);
-    if (R == 1) { // READY
-      display("RFID TRS Ready", "");
-      UpdateOutputs();
+    // Update LCD
+    lcd.clear();
+    lcd.setCursor(0, 0);
+    for (char c : "Door is open") {
+      lcd.print(c);
+    }
+    lcd.setCursor(0, 1);
+    for (char c : "Close the door") {
+      lcd.print(c);
+    }
 
-      // Reset variables
-      foundUser = 0;
+    tone(buzzer, 1000);
+    delay(100);
+    door = true;
+  }
+  else if (door == true) {
+    // Update LCD
+    lcd.clear();
+    lcd.setCursor(0, 0);
+    for (char c : message1) {
+      lcd.print(c);
+    }
+    if (secondMessage) {
+      lcd.setCursor(0, 1);
+      for (char c : message2) {
+        lcd.print(c);
+      }
+    }
+    door = false;
+  } else {
+    SerialReadCommand();
+    // display(message1, message2);
+    UpdateOutputs();
+
+    // if (S == 0) { // READY
+    // memset((void*)data_array, 0, ___ARR_SIZE___); // Reset data_array to avoid double tap
+    if (card_number == 0) {
+      cardRead();
+    }
+    //   delay(500);
+    if (card_number != 0) {
+      tone(buzzer, 1000);
+      delay(100);
+      noTone(buzzer);
+      // Serial.println(card_number, DEC);
+      WriteCereal(card_number, 0); // Send card with default profile
       card_number = 0;
-      c = 1;
-      memset((void*)data_array, 0, ___ARR_SIZE___); // Reset data_array
-      data_index = 0;
-      while (card_number == 0) {
-        // if (sensor == 1) {
-        //  display("Door is open", "Close the door");
-        //   tone(buzzer, 1000);
-        //   delay(1000);
-        // }
-       cardRead();
-      }
-      Serial.println(card_number, DEC);
-      
-      if (card_number != 0) {
-        // temp_card_number = card_number; // Store the card number before reset
-        foundUser = FindUserByID(card_number); // Look up user immediately
-        R = 2;
-      }
-    }
-    else if (R == 2) { // HANDLE USER
-      delay(1000);
-      UpdateOutputs();
-      
-      if (foundUser == 0) {
-        display(String(card_number), "Inactive User!");
-        Serial.println("Inactive User!");
-        delay(2000);
-        R = 1;
-        // Reset variables when returning to ready
-        // foundUser = 0;
-        // card_number = 0;
-      } else {
-        bool selected = false;
-        unsigned long selectionStart = millis();
-        const unsigned long maxSelectionDuration = 10000; // 10 seconds timeout
-        
-        if (U > 1) { // Only show selection if multiple profiles
-          while (!selected && (millis() - selectionStart < maxSelectionDuration)) {
-            display(userName, *profilePtr[c - 1]);
-      
-            if (buttonPushed(button1) && (millis() - buttonDebounceTime >= debounceDuration)) {
-              selectionStart = millis();
-              buttonDebounceTime = millis();
-              c = (c % U) + 1; // Better cycling through profiles
-            }
-            if (buttonPushed(button2) && (millis() - buttonDebounceTime >= debounceDuration)) {
-              buttonDebounceTime = millis();
-              profIndex = c;
-              selected = true;
-              R = 3;
-            }
-            delay(50);
-          }
-          
-          if (!selected) { // Timeout occurred
-            R = 1;
-          }
-        } else { // Single profile - auto-login
-          profIndex = 0;
-          R = 3;
-        }
-      }
-    }
-    else if (R == 3) { // LOGIN
-      display(userName, "Login");
-      UpdateOutputs();
-      delay(3000);
-      R = 1; // Return to READY
-    }
-    else if (R == 4) { // LOGOUT
-      display(userName, "Logout");
-      UpdateOutputs();
-      delay(3000);
-      R = 1; // Return to READY
+      stateStartTime = millis();
     }
   }
 }
+
