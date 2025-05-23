@@ -1,3 +1,5 @@
+// formerly send_faux_data
+// This is the code to simulate the computer module
 void setup() {
   // put your setup code here,to run once:
   Serial.begin(19200);
