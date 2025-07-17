@@ -459,29 +459,33 @@ bool buttonPushed(int button){
 
 // Talk to the comuter module (Send bytes including card serial number and account number
 void WriteCereal(uint32_t cardnumenc, int j) {
-  Serial.end();
+  //Serial.end();
   Serial.begin(9600);
   uint8_t Arr[3];
     for(int i = 0; i < 3; i++){  //for loop to capture 2 digit integers of card number
       Arr[i] = cardnumenc%(100); //% sign for byte capture
         cardnumenc /= 100;
     }
-    Serial.write(1); //...
-    Serial.write(9); //...
-    Serial.write(12); //Preamble
-    Serial.write(Arr[2]); //...
-    Serial.write(Arr[1]); //...
-    Serial.write(Arr[0]); //Card number
-    Serial.write(j); //Account number
-    Serial.write(0); //...
-    Serial.write(0); //...
-    Serial.write(0); //buffer 0's
+    Serial.write(1); //             Start Mark
+    Serial.write(9); //             Length
+    Serial.write(12); //Preamble    Status
+    Serial.write(Arr[2]); //        Data field (1) [LSB]
+    Serial.write(Arr[1]); //        Data field (2)
+    Serial.write(Arr[0]); //Card number   Data field (3)
+    Serial.write(j); //Account number     Data field (4)
+    Serial.write(0); //                   Data field (5)
+    Serial.write(0); //                   Data field (6)
+    Serial.write(0); //                   Data field (7)
+    Serial.write(0); //buffer 0's         Data field (8) [MSB]
     Serial.write(9 ^ 12 ^ Arr[2] ^ Arr[1] ^ Arr[0] ^ j); //checksum
     // delay(50);
     Serial.end();
     Serial.begin(19200);
     // card_number = 0;
-    S = 1;
+    //S = 0;
+    digitalWrite(SHD, HIGH);
+    delay(1000);
+    digitalWrite(SHD, LOW);
  }
 
 const unsigned long MESSAGE_TIMEOUT = 5;  // ms timeout for message completion
@@ -522,13 +526,13 @@ int SerialReadCommand() {
           if (i >= index) break;
           uint8_t value = cmd_buffer[i++];
 
-          if (instruction == 86) {
-            if (value == 1) S = true;
+          if (instruction == 86) {        //Turn GPIO off
+            if (value == 1) S = false;
             else if (value == 2) D = false;
             else if (value == 4) Y = false;
             else if (value == 5) B = false;
-          } else if (instruction == 87) {
-            if (value == 1) S = false;
+          } else if (instruction == 87) {   //Turn GPIO on
+            if (value == 1) S = true; 
             else if (value == 2) D = true;
             else if (value == 4) Y = true;
             else if (value == 5) B = true;
@@ -595,6 +599,7 @@ int SerialReadCommand() {
 
 void cardRead()
 {
+
   if (data_index > ___ARR_SIZE___ - 1)
   {
     //digitalWrite(13, HIGH);   //Give an indication to the user that the system is in transmission mode.
@@ -620,7 +625,9 @@ void cardRead()
 void UpdateOutputs () {
   digitalWrite(LED, D);
   digitalWrite(relay, Y);
-  digitalWrite(SHD, S);
+  //if (S == 1) digitalWrite(SHD, LOW);
+  //else        digitalWrite(SHD, HIGH);
+  digitalWrite(SHD, !S);
   digitalWrite(buzzer, B);
   if (B == 1) {
     tone(buzzer, 1000);
@@ -661,8 +668,9 @@ void setup()
   pinMode(fskSignalPin, INPUT);  // Set the FSK signal pin as input, pin assignment defined at top of code
   pinMode(SHD, OUTPUT);  // SHD control pin for EM4095 HIGH => SLEEP, LOW => ONLINE
   digitalWrite(SHD,  HIGH);
-  //delay(100);
-  //digitalWrite(SHD, LOW);
+  delay(100);
+  digitalWrite(SHD, LOW);
+  digitalWrite(mod, LOW);
 
 
   // Timer1 Setup for FSK signal detection
