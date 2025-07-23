@@ -36,7 +36,9 @@ String message2 = "";
 String message3 = "";
 String message4 = "";
 
-
+//A timer to wait until we can disable the LCD.
+volatile uint32_t display_off_time_ticks = 0; 
+volatile uint8_t overflow_count = 0;
 
 // initialize the library by associating any needed LCD interface pin
 // with the arduino pin number it is connected to
@@ -99,6 +101,50 @@ struct HID_CARD_DATA{
 
 struct HID_CARD_DATA Card_Data;
 */
+
+///!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+//This is some hardware timer code that I had ChatGPT write up to allow us to start a timer in the event the computer system wants to only keep the display online for a few moments.
+///!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+
+
+
+ISR(TIMER2_OVF_vect)
+ {
+    /*
+    overflow_count++;
+    if (overflow_count >= 61)
+    {
+        // 1 second has passed
+        overflow_count = 0;
+    }//End if
+    */
+    if (display_off_time_ticks == 0)
+    {
+      lcd.noDisplay();
+      timer2_disable();
+    }//End if
+    else
+      --display_off_time_ticks;
+}//End Timer2 Overflow Vector
+
+void timer2_enable() 
+{
+    TCCR2A = 0;                // Normal mode
+    TCCR2B = (1 << CS22) | (1 << CS21) | (1 << CS20); 
+                               // Prescaler = 1024
+    TIMSK2 = (1 << TOIE2);     // Enable Timer2 overflow interrupt
+    TCNT2 = 0;                 // Reset counter
+}//End timer2_enable
+
+void timer2_disable() 
+{
+    TCCR2B = 0;                      // Stop the clock (no prescaler)
+    TIMSK2 &= ~(1 << OCIE2A);        // Disable compare match interrupt
+    TCNT2 = 0;                       // Reset counter (optional)
+}//End timer2_disable
+
+///!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+///!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
 
 /*
  *  parity_check_binary
@@ -466,6 +512,7 @@ void WriteCereal(uint32_t cardnumenc, int j) {
       Arr[i] = cardnumenc%(100); //% sign for byte capture
         cardnumenc /= 100;
     }
+    //Mimic the RI-STU-MRD1 Micro-reader (2000 series reader system).
     Serial.write(1); //             Start Mark
     Serial.write(9); //             Length
     Serial.write(12); //Preamble    Status
@@ -513,33 +560,78 @@ int SerialReadCommand() {
     secondMessage = false;
 
     while (i < index) {
-      if (cmd_buffer[i] == 254) {  // Start of instruction
+      if (cmd_buffer[i] == 254) // Start of instruction 
+      {  
         i++;
         if (i >= index) break;
         uint8_t instruction = cmd_buffer[i++];
 
         // Handle known instruction sequences
-        if (instruction == 71) {
-          i += 2;  // Skip 2 extra bytes
+        if (instruction == 70) //Display off
+        {
+            lcd.noDisplay();  //Turns off the LCD display, without losing the text currently shown on it.
+        }//End if (70) Display off
+        
+        else if (instruction == 71)  //Set Cursor Position [column] [row]
+        {
+          //The original unit goes from 1 to 20 in columns, and 1 to 2 for rows. The Arduino library goes from 0 to 15 and 0 to 1.
+          uint8_t column = (cmd_buffer[i++]) - 1;
+          uint8_t row = (cmd_buffer[i++]) - 1;
+
+          if (column > 15)
+            column = 15;
+
+          lcd.setCursor(column, row);
+
+          //i += 2;  // Skip 2 extra bytes
           secondMessage = true;
-        } else if (instruction == 86 || instruction == 87) {
+        }//End else if (71) Set Cursor Position
+
+        else if (instruction == 86 || instruction == 87) 
+        {
           if (i >= index) break;
           uint8_t value = cmd_buffer[i++];
 
-          if (instruction == 86) {        //Turn GPIO off
+          if (instruction == 86) //Turn GPIO off
+          {        
             if (value == 1) S = false;
             else if (value == 2) D = false;
             else if (value == 4) Y = false;
             else if (value == 5) B = false;
-          } else if (instruction == 87) {   //Turn GPIO on
+          }//End if (86) GPIO OFF
+
+          else if (instruction == 87) //Turn GPIO on
+          {   
             if (value == 1) S = true; 
             else if (value == 2) D = true;
             else if (value == 4) Y = true;
             else if (value == 5) B = true;
-          }
-        } else if (instruction == 37 || instruction == 66) {
+          }//End if (87)  GPIO ON
+        }//End else if (86/87)
+
+        else if (instruction == 88) //Clear Display
+        {
+            lcd.clear(); //Clears the LCD screen and positions the cursor in the upper-left corner
+        }//End else if (88) Clear Display
+
+        else if (instruction == 37) //Keypad or GPO mode [mode] 0 -> keypad, 1 -> GPO
+        {
           i += 1;  // Skip 1 extra byte
-        }
+        }//End else if Keypad or GPO mode
+
+        else if (instruction == 66) //Display On [minutes] (R)
+        {
+          //This command turns on the display on for a time of [minutes] minutes. If [minutes] is zero (0), the display will remain on indefinitely.
+            uint8_t minutes = cmd_buffer[i++];
+            lcd.display();
+            if (minutes != 0)   //if it is 0 then leave it on indefinitely.
+            {
+              //60 seconds per minute.
+              //61 ticks per second.
+              display_off_time_ticks = minutes * 60 *  61;
+              timer2_enable();
+            }//End if
+        }//End else if (66) Dispaly On
 
         // Add space if a char was just written
         if (justWroteChar) {
@@ -550,21 +642,26 @@ int SerialReadCommand() {
           justWroteChar = false;
         }
 
-      } else {  // Regular character
-        if (isPrintable(cmd_buffer[i])) {
+      }//End if (254) COMMAND 
+      
+      else // Regular character
+      {  
+        if (isPrintable(cmd_buffer[i])) 
+        {
           if (!secondMessage)
             message1 += (char)cmd_buffer[i];
           else
             message2 += (char)cmd_buffer[i];
           justWroteChar = true;
-        }
+        }//End if (Character to display)
         i++;
-        if (message1[0] != "") {
+        if (message1[0] != "") 
+        {
         message3 = message1;
         message4 = message2;
-        }
-      }
-    }
+        }//End if
+      }//End else Regular Character
+    }//End while loop
 
     // Serial.println();
     // Debug: Output control variables
@@ -749,6 +846,7 @@ void loop() {
       cardRead();
     }
     //   delay(500);
+    //Successful card read:
     if (card_number != 0) {
       tone(buzzer, 1000);
       delay(100);
