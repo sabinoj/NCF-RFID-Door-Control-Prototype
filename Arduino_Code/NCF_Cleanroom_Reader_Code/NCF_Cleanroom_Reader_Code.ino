@@ -120,7 +120,8 @@ ISR(TIMER2_OVF_vect)
     */
     if (display_off_time_ticks == 0)
     {
-      lcd.noDisplay();
+      //lcd.noDisplay();
+      lcd.setBacklight(LOW);
       timer2_disable();
     }//End if
     else
@@ -531,7 +532,7 @@ void WriteCereal(uint32_t cardnumenc, int j) {
     // card_number = 0;
     //S = 0;
     digitalWrite(SHD, HIGH);
-    delay(1000);
+    delay(500);
     digitalWrite(SHD, LOW);
  }
 
@@ -569,7 +570,8 @@ int SerialReadCommand() {
         // Handle known instruction sequences
         if (instruction == 70) //Display off
         {
-            lcd.noDisplay();  //Turns off the LCD display, without losing the text currently shown on it.
+            //lcd.noDisplay();  //Turns off the LCD display, without losing the text currently shown on it.
+          lcd.setBacklight(LOW);
         }//End if (70) Display off
         
         else if (instruction == 71)  //Set Cursor Position [column] [row]
@@ -623,7 +625,9 @@ int SerialReadCommand() {
         {
           //This command turns on the display on for a time of [minutes] minutes. If [minutes] is zero (0), the display will remain on indefinitely.
             uint8_t minutes = cmd_buffer[i++];
-            lcd.display();
+            //lcd.display();
+            lcd.setBacklight(HIGH);
+            /* We will not need the timer, because the PC always disables the display for us. And this interferes with the buzzer.
             if (minutes != 0)   //if it is 0 then leave it on indefinitely.
             {
               //60 seconds per minute.
@@ -631,6 +635,7 @@ int SerialReadCommand() {
               display_off_time_ticks = minutes * 60 *  61;
               timer2_enable();
             }//End if
+            */
         }//End else if (66) Dispaly On
 
         // Add space if a char was just written
@@ -725,9 +730,9 @@ void UpdateOutputs () {
   //if (S == 1) digitalWrite(SHD, LOW);
   //else        digitalWrite(SHD, HIGH);
   digitalWrite(SHD, !S);
-  digitalWrite(buzzer, B);
+  //digitalWrite(buzzer, B);
   if (B == 1) {
-    tone(buzzer, 1000);
+    tone(buzzer, 2300);
   } else {
     noTone(buzzer);
   }
@@ -815,7 +820,7 @@ void loop() {
         lcd.print(c);
     }
 
-    tone(buzzer, 1000);
+    tone(buzzer, 2300);
     delay(100);
     door = true;
 
@@ -848,7 +853,7 @@ void loop() {
     //   delay(500);
     //Successful card read:
     if (card_number != 0) {
-      tone(buzzer, 1000);
+      tone(buzzer, 2300);
       delay(100);
       noTone(buzzer);
       // Serial.println(card_number, DEC);
