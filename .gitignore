@@ -1,0 +1,24 @@
+PCB/History/
+PCB/Project Logs for UNOshield/
+PCB/__Previews/
+*.APR_LIB
+*.html
+*.drc
+*.DRR
+*.EXTREP
+*.GBL
+*.GBO
+*.GBP
+*.GBS
+*.GM
+*.GM13
+*.GTO
+*.GTL
+*.GTP
+*.GTS
+*.LDP
+*.REP
+*.apr
+PCB/Project Outputs for UNOshield/*.txt
+PCB/Project Outputs for UNOshield/*.TXT
+PCB/Project Outputs for UNOshield/*.Txt
