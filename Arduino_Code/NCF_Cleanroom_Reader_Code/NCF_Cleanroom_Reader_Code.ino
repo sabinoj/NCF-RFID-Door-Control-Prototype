@@ -16,9 +16,9 @@ const int mod = A4;
 const int rdyclk  = A5;
 // serial commands on pin 0 and 1, LCD on pins 2 to 5
 const int relay = 6;       // Relay control pin TODO
-const int button1 = 7;  // scroll button :D I did it
+//const int button1 = 7;  // scroll button :D I did it
 const int fskSignalPin = 8;  // Pin connected to the FSK signal (ICU pin)
-const int button2 = 9;  // select button TODO
+//const int button2 = 9;  // select button TODO
 // display enable on pin 10 and reset on pin 11
 const int doorSensor = 12; // TODO
 const int motionserialin = 13; // TODO
@@ -31,6 +31,8 @@ bool Y; // Door Relay OFF/ON
 bool S; // SHD OFF/ON
 bool D; // R/G LEDs RED/GREEN
 bool B; // Buzzer OFF/ON
+bool BACKLIGHT_SETTING = true; //Backlight setting to update.
+bool BACKLIGHT_STATUS = true;  //Backlight current state.
 String message1 = "";
 String message2 = "";
 String message3 = "";
@@ -42,7 +44,7 @@ volatile uint8_t overflow_count = 0;
 
 // initialize the library by associating any needed LCD interface pin
 // with the arduino pin number it is connected to
-const int rs = 11, en = 10, d4 = 5, d5 = 4, d6 = 3, d7 = 2;
+//const int rs = 11, en = 10, d4 = 5, d5 = 4, d6 = 3, d7 = 2;
 // LiquidCrystal lcd(rs, en, d4, d5, d6, d7);
 //LiquidCrystal lcd(11, 10, 5, 4, 3, 2);
 const int LCD_latch = 11, LCD_data = 10, LCD_clk = 9; 
@@ -79,9 +81,9 @@ const unsigned long High_Period_max = 1600 / 8; // 100us * 16,000,000Hz
 
 //variables for handling output to LCD
 const unsigned long message1_TIMEOUT = 5;  // ms timeout for message1 completion
-#define MAX_BUFFER_SIZE 150           // Max number of bytes we can buffer
-volatile uint8_t buffer[MAX_BUFFER_SIZE];
-size_t serialBufferIndex = 0;
+#define MAX_BUFFER_SIZE 75//150           // Max number of bytes we can buffer
+//volatile uint8_t buffer[MAX_BUFFER_SIZE];
+//size_t serialBufferIndex = 0;
 
 // boolean to check if a card was scanned
 // bool cardScanned = false;
@@ -107,17 +109,17 @@ struct HID_CARD_DATA Card_Data;
 ///!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
 
 
-
+/*
 ISR(TIMER2_OVF_vect)
  {
-    /*
-    overflow_count++;
-    if (overflow_count >= 61)
-    {
-        // 1 second has passed
-        overflow_count = 0;
-    }//End if
-    */
+
+    // overflow_count++;
+    // if (overflow_count >= 61)
+    // {
+    //     // 1 second has passed
+    //     overflow_count = 0;
+    // }//End if
+
     if (display_off_time_ticks == 0)
     {
       //lcd.noDisplay();
@@ -143,7 +145,7 @@ void timer2_disable()
     TIMSK2 &= ~(1 << OCIE2A);        // Disable compare match interrupt
     TCNT2 = 0;                       // Reset counter (optional)
 }//End timer2_disable
-
+*/
 ///!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
 ///!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
 
@@ -505,7 +507,9 @@ bool buttonPushed(int button){
 
 
 // Talk to the comuter module (Send bytes including card serial number and account number
-void WriteCereal(uint32_t cardnumenc, int j) {
+void WriteCereal(uint32_t cardnumenc, int j) 
+{
+  digitalWrite(SHD, HIGH);
   //Serial.end();
   Serial.begin(9600);
   uint8_t Arr[3];
@@ -531,15 +535,24 @@ void WriteCereal(uint32_t cardnumenc, int j) {
     Serial.begin(19200);
     // card_number = 0;
     //S = 0;
-    digitalWrite(SHD, HIGH);
-    delay(500);
+    //digitalWrite(SHD, HIGH);
+    delay(1000);
+
+data_index = 0;
+//Re-enable the system.
+TCCR1A = 0;           // Initialize Timer1A
+TCCR1B = 0;           // Initialize Timer1B
+TCCR1B |= B00000010;  // Internal Clock, Prescaler = 8, ICU Filter DIS, ICU Pin RISING
+TIMSK1 |= B00100001;  // Enable Timer1 Overflow and Capture Interrupts
+
     digitalWrite(SHD, LOW);
- }
+ }//End WriteCereal
 
 const unsigned long MESSAGE_TIMEOUT = 5;  // ms timeout for message completion
 bool secondMessage = false;
 
-int SerialReadCommand() {
+int SerialReadCommand() 
+{
   uint8_t cmd_buffer[MAX_BUFFER_SIZE];
   int index = 0;
   unsigned long lastByteTime = 0;
@@ -571,7 +584,8 @@ int SerialReadCommand() {
         if (instruction == 70) //Display off
         {
             //lcd.noDisplay();  //Turns off the LCD display, without losing the text currently shown on it.
-          lcd.setBacklight(LOW);
+//lcd.setBacklight(LOW);
+BACKLIGHT_SETTING = false;
         }//End if (70) Display off
         
         else if (instruction == 71)  //Set Cursor Position [column] [row]
@@ -583,7 +597,7 @@ int SerialReadCommand() {
           if (column > 15)
             column = 15;
 
-          lcd.setCursor(column, row);
+//lcd.setCursor(column, row);
 
           //i += 2;  // Skip 2 extra bytes
           secondMessage = true;
@@ -594,7 +608,7 @@ int SerialReadCommand() {
           if (i >= index) break;
           uint8_t value = cmd_buffer[i++];
 
-          if (instruction == 86) //Turn GPIO off
+          if (instruction == 86) //Turn GPIO off ('V')
           {        
             if (value == 1) S = false;
             else if (value == 2) D = false;
@@ -602,7 +616,7 @@ int SerialReadCommand() {
             else if (value == 5) B = false;
           }//End if (86) GPIO OFF
 
-          else if (instruction == 87) //Turn GPIO on
+          else if (instruction == 87) //Turn GPIO on ('W')
           {   
             if (value == 1) S = true; 
             else if (value == 2) D = true;
@@ -613,7 +627,7 @@ int SerialReadCommand() {
 
         else if (instruction == 88) //Clear Display
         {
-            lcd.clear(); //Clears the LCD screen and positions the cursor in the upper-left corner
+//lcd.clear(); //Clears the LCD screen and positions the cursor in the upper-left corner
         }//End else if (88) Clear Display
 
         else if (instruction == 37) //Keypad or GPO mode [mode] 0 -> keypad, 1 -> GPO
@@ -624,9 +638,11 @@ int SerialReadCommand() {
         else if (instruction == 66) //Display On [minutes] (R)
         {
           //This command turns on the display on for a time of [minutes] minutes. If [minutes] is zero (0), the display will remain on indefinitely.
-            uint8_t minutes = cmd_buffer[i++];
+            //uint8_t minutes = cmd_buffer[i++];
+            i++;
+            BACKLIGHT_SETTING = true;
             //lcd.display();
-            lcd.setBacklight(HIGH);
+//lcd.setBacklight(HIGH);
             /* We will not need the timer, because the PC always disables the display for us. And this interferes with the buzzer.
             if (minutes != 0)   //if it is 0 then leave it on indefinitely.
             {
@@ -637,15 +653,16 @@ int SerialReadCommand() {
             }//End if
             */
         }//End else if (66) Dispaly On
-
+///!*!*!*!*!*!*!*!*!*!*
+/// REVIEW THIS. I'M NOT SURE EXACTLY WHAT IT DOES.
+///!*!*!*!*!*!*!*!*!*!*        
         // Add space if a char was just written
-        if (justWroteChar) {
-          if (!secondMessage)
-            message1 += ' ';
-          else
-            message2 += ' ';
+        if (justWroteChar) 
+        {
+          if (!secondMessage)       message1 += ' ';
+          else                      message2 += ' ';
           justWroteChar = false;
-        }
+        }//End if (justWroteChar)
 
       }//End if (254) COMMAND 
       
@@ -697,7 +714,7 @@ int SerialReadCommand() {
 
     index = 0;  // Reset buffer
   }
-}
+}//End SerialReadCommand
 
 void cardRead()
 {
@@ -720,23 +737,30 @@ void cardRead()
     TIMSK1 |= B00100001;  // Enable Timer1 Overflow and Capture Interrupts
     //digitalWrite(13, LOW); //Give an indication to the user that the system has exited transmission mode.
     digitalWrite(SHD, HIGH);
+    //digitalWrite(SHD, LOW);
   }
 }//End cardRead
 
 // Digital write pins at once
-void UpdateOutputs () {
+void UpdateOutputs () 
+{
   digitalWrite(LED, D);
-  digitalWrite(relay, Y);
+  digitalWrite(relay, !Y);
   //if (S == 1) digitalWrite(SHD, LOW);
   //else        digitalWrite(SHD, HIGH);
   digitalWrite(SHD, !S);
   //digitalWrite(buzzer, B);
-  if (B == 1) {
-    tone(buzzer, 2300);
-  } else {
-    noTone(buzzer);
-  }
-}
+  if (B == 1)     tone(buzzer, 2300);
+  else            noTone(buzzer);
+
+  /*
+  if (BACKLIGHT_SETTING != BACKLIGHT_STATUS)
+  {
+    lcd.setBacklight(BACKLIGHT_SETTING);
+    BACKLIGHT_STATUS = BACKLIGHT_SETTING;
+  }//End backlight if
+  */
+}//End UpdateOutputs
 
 // LCD display (line1, line2)
 // void display(const String line1, const String line2) {
@@ -751,20 +775,26 @@ void UpdateOutputs () {
 
 void setup()
 {
-  pinMode(A4, OUTPUT);
-  digitalWrite(A4, LOW);
-  pinMode(button1, INPUT_PULLUP);  // Internal pull-up resistor
-  pinMode(button2, INPUT_PULLUP);  // Internal pull-up resistor
+  pinMode(mod, OUTPUT);
+  digitalWrite(mod, LOW);
+  //pinMode(button1, INPUT_PULLUP);  // Internal pull-up resistor
+  //pinMode(button2, INPUT_PULLUP);  // Internal pull-up resistor
   pinMode(doorSensor, INPUT);
   pinMode(LED, OUTPUT);  // Set analog pin A0 as digital output
   pinMode(buzzer, OUTPUT);
   pinMode(relay, OUTPUT);
   Serial.begin(19200);
-  Serial.setTimeout(500); //Set a timeout of 500 millisecond when reading data.
+  //Serial.setTimeout(500); //Set a timeout of 500 millisecond when reading data.
+  Serial.setTimeout(1000);
   // Initialize serial communication
   // // Serial.println("FSK Decoder ONLINE:\n\r");
 
-  digitalWrite(relay, LOW);      // Start with relay OFF (door locked)
+
+  //digitalWrite(relay, LOW);      // Start with relay OFF (door locked)
+  digitalWrite(relay, HIGH);      //the relay needs to be turned on now to lock the door.
+
+
+
 
   // Pin Setup
   pinMode(fskSignalPin, INPUT);  // Set the FSK signal pin as input, pin assignment defined at top of code
@@ -772,7 +802,9 @@ void setup()
   digitalWrite(SHD,  HIGH);
   delay(100);
   digitalWrite(SHD, LOW);
-  digitalWrite(mod, LOW);
+  //digitalWrite(mod, LOW);
+
+
 
 
   // Timer1 Setup for FSK signal detection
@@ -785,8 +817,9 @@ void setup()
   lcd.begin(16, 2); //16 columns, 2 rows
   lcd.setCursor(0, 0);
   lcd.print("Initializing...");
-  
-  S = 1;
+  //lcd.setBacklight(0);    //This causes a lock-up on the card reader.
+
+  S = true;
   
 }//End setup
 
@@ -803,30 +836,40 @@ const unsigned long serialReadInterval = 2000;  // 1 second
 bool door = false;
 
 void loop() {
+  //Check if the door has been opened:
   bool sensor = digitalRead(doorSensor);
 
   // Trigger only when state goes from LOW to HIGH
-  if (sensor == 1) {
+  if (sensor == 1) 
+  {
+///!*!*!*!*!*!*!*!*!*!*
+///THIS MAY BE THE SOURCE OF THE DISPLAY ERROR!!!
+///!*!*!*!*!*!*!*!*!*!*
     // Update LCD
     lcd.clear();
     lcd.setCursor(0, 0);
-    for (char c : "Door is open") {
+    for (char c : "Door is open") 
+    {
       if (c != 0)
         lcd.print(c);
-    }
+    }//End for loop
     lcd.setCursor(0, 1);
-    for (char c : "Close the door") {
+    for (char c : "Close the door") 
+    {
       if (c != 0)
         lcd.print(c);
-    }
+    }//End for loop
+///!*!*!*!*!*!*!*!*!*!*
+///!*!*!*!*!*!*!*!*!*!*
 
     tone(buzzer, 2300);
     delay(100);
     door = true;
 
-    while(digitalRead(doorSensor));
-  }
-  else if (door == true) {
+    while(digitalRead(doorSensor)); //Wait until the door is closed.
+  }//End if (sensor == 1)
+  else if (door == true) 
+  {
     // Update LCD
     lcd.clear();
     lcd.setCursor(0, 0);
@@ -840,27 +883,33 @@ void loop() {
       }
     }
     door = false;
-  } else {
+  }//End else if (door == true)
+  else 
+  {
     SerialReadCommand();
     // display(message1, message2);
     UpdateOutputs();
 
     // if (S == 0) { // READY
     // memset((void*)data_array, 0, ___ARR_SIZE___); // Reset data_array to avoid double tap
-    if (card_number == 0) {
+    if (card_number == 0) 
+    {
       cardRead();
-    }
+    }//End if (card_number == 0)
     //   delay(500);
     //Successful card read:
-    if (card_number != 0) {
+    //if (card_number != 0) 
+    else
+    {
       tone(buzzer, 2300);
       delay(100);
       noTone(buzzer);
       // Serial.println(card_number, DEC);
       WriteCereal(card_number, 0); // Send card with default profile
       card_number = 0;
-      stateStartTime = millis();
-    }
-  }
-}
+      //delay(1000);
+      //stateStartTime = millis();
+    }//End if (card_number != 0)
+  }//End else
+}//End void loop
 
